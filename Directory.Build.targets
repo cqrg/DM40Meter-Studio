@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    本地构建补丁（梁雨欢机器，2026-10-26，不属于原仓库内容）
+
+    问题现象：波形区永久空白（连坐标轴都没有），统计面板却正常累计样本。
+
+    根因：Dm40.App 未声明 PlatformTarget / Prefer32Bit，走 AnyCPU 默认。
+      · Microsoft.Web.WebView2 的 Common.targets 在 PlatformTarget 为空时
+        把 EffectivePlatform 定为 x86 → 只复制 runtimes\win-x86\native\WebView2Loader.dll
+      · .NET SDK 对 AnyCPU 可执行文件的 Prefer32Bit 默认是 false
+        → 实际以 64 位进程运行（已用 IsWow64Process 实测确认）
+      · 64 位进程 P/Invoke x86 原生 DLL → System.BadImageFormatException (0x8007000B)
+      · 该异常被 MainWindow.InitWaveformWebView 的 catch{} 静默吞掉
+        → _webViewReady 永远为 false → RefreshPlot 每次直接 return → 波形从不着色
+
+    为什么上游作者没踩到：他在 Visual Studio 里用 MSBuild.exe 构建，
+    旧式 WPF 工程默认 Prefer32Bit=true（32 位进程），与 x86 loader 天然匹配。
+
+    修复：显式钉成 32 位进程（anycpu32bitpreferred），与 x86 loader 对齐。
+    放在 .targets（项目之后导入），确保覆盖 SDK 默认值。
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Dm40.App'">
+    <Prefer32Bit>true</Prefer32Bit>
+  </PropertyGroup>
+
+</Project>

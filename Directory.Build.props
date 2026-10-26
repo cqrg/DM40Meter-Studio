@@ -1,0 +1,13 @@
+<Project>
+
+  <!--
+    本地构建补充（梁雨欢机器，2026-10-26 添加，不属于原仓库内容）
+    本机未安装 Visual Studio，缺少 net48 参考程序集
+    (C:\Program Files (x86)\Reference Assemblies\...\.NETFramework\v4.8)，
+    用微软官方 NuGet 包补齐，从而可用 dotnet build 直接编译 net48 项目。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

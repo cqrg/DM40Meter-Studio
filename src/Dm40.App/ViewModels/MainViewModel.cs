@@ -52,6 +52,7 @@ namespace Dm40.App.ViewModels
             _session.ReadingAvailable += OnReading;
             _session.RawFrame += OnRawFrame;
             _session.AlarmTriggered += OnAlarm;
+            _session.ModeChanged += OnModeChanged;
             _source.StateChanged += OnStateChanged;
             _source.Diagnostic += OnDiagnostic;
 
@@ -411,8 +412,22 @@ namespace Dm40.App.ViewModels
         public RelayCommand SetReplaySpeedCommand { get; }
         public RelayCommand ScreenshotCommand { get; }
 
-        private string _screenshotDir = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "DM40MeterStudio");
+        /// <summary>
+        /// 默认数据根目录。设了环境变量 DM40_DATA_DIR 就用它（便于把录制/截图统一归到某个盘），
+        /// 否则回落到系统「文档」。这样既不写死某台机器的路径，又允许按需重定向。
+        /// </summary>
+        private static string DefaultDataRoot
+        {
+            get
+            {
+                var custom = Environment.GetEnvironmentVariable("DM40_DATA_DIR");
+                return !string.IsNullOrWhiteSpace(custom)
+                    ? custom.Trim()
+                    : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            }
+        }
+
+        private string _screenshotDir = System.IO.Path.Combine(DefaultDataRoot, "DM40MeterStudio");
         /// <summary>一键截图保存目录（默认 图片\DM40MeterStudio，可在设置修改）。</summary>
         public string ScreenshotDir { get => _screenshotDir; set => Set(ref _screenshotDir, value); }
 
@@ -686,8 +701,9 @@ namespace Dm40.App.ViewModels
             }
             else
             {
+                // 录制默认落在数据根目录（可用环境变量 DM40_DATA_DIR 重定向），文件带时间戳
                 var path = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    DefaultDataRoot,
                     "DM40_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".csv");
                 _session.Recorder = new CsvRecorder(new FileCsvSink(path), SystemClock.Instance);
                 _session.Recorder.Start();
@@ -730,6 +746,36 @@ namespace Dm40.App.ViewModels
         }
 
         // ===================== 事件（后台线程 → marshal + 节流） =====================
+
+        /// <summary>
+        /// 档位切换回调：Core 侧已把统计和波形清零，这里负责清掉 UI 上的旧读数残留，
+        /// 避免切档瞬间仍显示上一档位的数值、单位和小数位（例如刚切到电压档还挂着 30.4 °C）。
+        /// </summary>
+        private void OnModeChanged(string newKind, string oldKind)
+        {
+            _dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 读数区立刻置空，等新档位首帧到来再填
+                MainReading = "---";
+                Unit = "";
+                Range = "";
+                Secondary1 = "--";
+                Secondary2 = "--";
+
+                // 丢弃尚未渲染的旧帧快照，防止一次 dirty 刷新把旧值又贴回来
+                _latest = null;
+                _dirty = false;
+
+                // 统计面板已清零，主动通知刷新（这些是计算属性，不会自动变）
+                _statStart = null;
+                StatSummary = "样本 0 · 时长 00:00:00";
+                OnPropertyChanged(nameof(StatMin));
+                OnPropertyChanged(nameof(StatMax));
+                OnPropertyChanged(nameof(StatAvg));
+                OnPropertyChanged(nameof(StatDelta));
+                OnPropertyChanged(nameof(StatCount));
+            }));
+        }
 
         private void OnReading(Measurement m)
         {

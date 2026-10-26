@@ -156,19 +156,41 @@ namespace Dm40.App.Views
 
         // ===================== WebView2 初始化 =====================
 
+        // 【本地诊断补丁 2026-10-26】原实现所有失败路径均静默（catch{} / !IsSuccess return），
+        // 波形区空白时无从判断断在哪一层。此处加入 diag-webview.log 落盘，仅增加观测，不改行为。
+        private static void DiagW(string msg)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "diag-webview.log"),
+                    DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + Environment.NewLine,
+                    new System.Text.UTF8Encoding(false));
+            }
+            catch { }
+        }
+
         private async void InitWaveformWebView()
         {
+            DiagW("[init] 进入 InitWaveformWebView  IsLoaded=" + WaveformWeb.IsLoaded
+                  + "  IsVisible=" + WaveformWeb.IsVisible
+                  + "  WinLoaded=" + IsLoaded);
+
             WaveformWeb.CoreWebView2InitializationCompleted += (s, e) =>
             {
+                DiagW("[init] InitializationCompleted IsSuccess=" + e.IsSuccess
+                      + (e.IsSuccess ? "" : "  ex=" + (e.InitializationException?.ToString() ?? "null")));
                 if (!e.IsSuccess) return;
                 var cwv = WaveformWeb.CoreWebView2;
                 cwv.Settings.IsZoomControlEnabled = false;
                 cwv.Settings.AreDefaultContextMenusEnabled = false;
                 cwv.Settings.IsStatusBarEnabled = false;
-                cwv.NavigateToString(BuildWaveformHtml());
+                var html = BuildWaveformHtml();
+                DiagW("[init] BuildWaveformHtml 长度=" + html.Length + "，准备 NavigateToString");
+                cwv.NavigateToString(html);
             };
             WaveformWeb.NavigationCompleted += (s, e) =>
             {
+                DiagW("[nav] NavigationCompleted IsSuccess=" + e.IsSuccess + "  status=" + e.WebErrorStatus);
                 if (!e.IsSuccess) return;
                 _webViewReady = true;
                 _lastUnit = null;          // 强制首帧推 setUnit
@@ -176,9 +198,34 @@ namespace Dm40.App.Views
                 Eval("dm40.setWindow(" + _vm.WindowSeconds + ")");
                 Eval("dm40.setMode('" + (_vm.IsReplayMode ? "replay" : "live") + "')");
                 UpdateLimitLines();         // 推初始上下限标注（若已设）
+                _ = ProbeWaveJs();
             };
-            try { await WaveformWeb.EnsureCoreWebView2Async(null); }
-            catch { /* WebView2 运行时缺失时静默，其余 UI 仍可用 */ }
+            try
+            {
+                DiagW("[init] 调用 EnsureCoreWebView2Async  IsLoaded=" + WaveformWeb.IsLoaded);
+                await WaveformWeb.EnsureCoreWebView2Async(null);
+                DiagW("[init] EnsureCoreWebView2Async 返回成功  CoreWebView2=" + (WaveformWeb.CoreWebView2 != null));
+            }
+            catch (Exception ex)
+            {
+                DiagW("[init] EnsureCoreWebView2Async EXCEPTION: " + ex);
+            }
+        }
+
+        // 探测 JS 侧真实状态：echarts 是否加载、#chart 是否拿到尺寸
+        private async System.Threading.Tasks.Task ProbeWaveJs()
+        {
+            try
+            {
+                var r = await WaveformWeb.CoreWebView2.ExecuteScriptAsync(
+                    "JSON.stringify({echarts:typeof echarts," +
+                    "cw:(document.getElementById('chart')||{}).clientWidth||-1," +
+                    "ch:(document.getElementById('chart')||{}).clientHeight||-1," +
+                    "bw:document.body.clientWidth,bh:document.body.clientHeight," +
+                    "hasDm40:typeof window.dm40})");
+                DiagW("[probe] " + r);
+            }
+            catch (Exception ex) { DiagW("[probe] EX " + ex.Message); }
         }
 
         // 读取本地 echarts.min.js，内联进 waveform.html 的占位符 → 单文件 NavigateToString（离线可靠）

@@ -17,6 +17,12 @@ TestResults/
 # ---- 运行期日志 / 崩溃转储 ----
 logs/
 fatal-error.log
+diag.log
+diag-webview.log
+
+# ---- 本地源码备份 ----
+*.bak
+*.bak_*
 
 # ---- NuGet ----
 *.nupkg
